@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from datetime import datetime
+
 
 @dataclass(order=True)
 class Alert:
     """Class for keeping alert data."""
 
-    ends_at: float | None
+    ends_at: datetime | None
     header_text: dict[str, str]  # key is language
     description_text: dict[str, str]  # key is language

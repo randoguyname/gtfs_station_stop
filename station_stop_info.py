@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Self, override
 
@@ -30,7 +30,7 @@ class LocationType(Enum):
             return "entrance"
         elif self == LocationType.GENERIC_NODE:
             return "generic_node"
-        else: # self == LocationType.BOARDING_AREA:
+        else:  # self == LocationType.BOARDING_AREA:
             return "boarding_area"
 
 
@@ -44,7 +44,7 @@ class WheelchairBoarding(Enum):
             return "no_information"
         elif self == WheelchairBoarding.ACCESSIBLE:
             return "accessible"
-        else: # self == WheelchairBoarding.INACCESSIBLE:
+        else:  # self == WheelchairBoarding.INACCESSIBLE:
             return "inaccessible"
 
     @classmethod
@@ -113,10 +113,8 @@ class StationStopInfo:
 class StationStopInfoDataset(GtfsStaticDataset):
     """Dataset class for Station/Stop Info."""
 
-    station_stop_infos: dict[str, StationStopInfo]
-
-    def __init__(self):
-        self.station_stop_infos = {}
+    station_stop_infos: dict[str, StationStopInfo] = field(
+        init=False, default_factory=dict)
 
     @override
     async def async_add_gtfs_data(self, zip_filelike):
@@ -127,12 +125,13 @@ class StationStopInfoDataset(GtfsStaticDataset):
                 parent = self.station_stop_infos.get(line.parent_station)
             self.station_stop_infos[stop_id] = StationStopInfo(line, parent)
 
+    @override
+    def __getitem__(self, key) -> StationStopInfo:
+        return self.station_stop_infos[key]
+
     def get_stop_ids(self) -> Iterable[str]:
         """Get all stop IDs."""
         return self.station_stop_infos.keys()
-
-    def __getitem__(self, key) -> StationStopInfo:
-        return self.station_stop_infos[key]
 
     def get(self, key: Any, default: Any | None = None):
         """Get a stop by ID or a default."""

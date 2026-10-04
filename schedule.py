@@ -10,7 +10,6 @@ from os import PathLike
 from pathlib import Path
 from re import Pattern, search
 
-import aiofiles
 from aiohttp import ClientSession
 from yarl import URL
 import logging
@@ -51,6 +50,7 @@ class ScheduleRelationship(Enum):
         if value is None:
             return cls.SCHEDULED
         return super()._missing_(value)
+
 
 @dataclass(kw_only=True)
 class GtfsSchedule:
@@ -96,7 +96,7 @@ class GtfsSchedule:
                         tg.create_task(
                             self._async_download_to_file_and_add_data(
                                 tg,
-                                url_or_path, # type: ignore
+                                url_or_path,  # type: ignore
                                 path,
                                 session=session,
                                 **kwargs,
@@ -107,7 +107,7 @@ class GtfsSchedule:
                             self._async_download_to_file_and_add_data(
                                 tg,
                                 None,
-                                url_or_path, # type: ignore
+                                url_or_path,  # type: ignore
                                 session=session,
                                 **kwargs,
                             )
@@ -198,7 +198,7 @@ class GtfsSchedule:
                         Arrival(
                             route=trip_info.route_id,
                             trip=trip_info.trip_id,
-                            time=at.timestamp(),
+                            time=at,
                         )
                     )
 
@@ -219,15 +219,14 @@ class GtfsSchedule:
         target: Path,
         *,
         session: ClientSession | None = None,
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
-        **kwargs,
     ) -> None:
         if url is not None:
 
             self.download_locks.setdefault(url, Lock())
 
             if self.download_locks[url].locked():
-                _LOGGER.debug("_async_download_to_file_and_add_data: Waiting for another execution to complete...")
+                _LOGGER.debug(
+                    "_async_download_to_file_and_add_data: Waiting for another execution to complete...")
                 await self.download_locks[url].acquire()
                 _LOGGER.debug(
                     "_async_download_to_file_and_add_data: Download completed by another execution, returning early")
@@ -263,13 +262,15 @@ class GtfsSchedule:
 
                     os.makedirs((nested_dest / filename).parent, exist_ok=True)
 
-                    _LOGGER.debug("_async_download_to_file_and_add_data: Downloading file `%s` from url `%s`", filename, url)
+                    _LOGGER.debug(
+                        "_async_download_to_file_and_add_data: Downloading file `%s` from url `%s`", filename, url)
                     with open(nested_dest / filename, "wb") as outfile:
                         await r.read_into(filename, outfile)
 
                     self.resources.add(nested_dest / filename)
 
-                    _LOGGER.debug("_async_download_to_file_and_add_data: File successfully downloaded")
+                    _LOGGER.debug(
+                        "_async_download_to_file_and_add_data: File successfully downloaded")
 
             if close_session:
                 await session.close()

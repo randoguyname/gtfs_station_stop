@@ -8,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Collection
 from typing import Any
 from weakref import WeakSet
+from datetime import timedelta
 
 import requests
 from aiohttp import ClientSession, ClientTimeout
@@ -209,31 +210,31 @@ class FeedSubject:
                         _stu.schedule_relationship)
                     return relationship in {ScheduleRelationship.SCHEDULED}
 
-                for stu in filter(_stop_time_update_filter, tu.stop_time_update):
-                    for sub in (
-                        sub
-                        for sub in self.subscribers[stu.stop_id]
-                        if hasattr(sub, "arrivals")
+                for stop_time_update in filter(_stop_time_update_filter, tu.stop_time_update):
+                    for subscriber in (
+                        subscriber
+                        for subscriber in self.subscribers[stop_time_update.stop_id]
+                        if hasattr(subscriber, "arrivals")
                     ):
                         arrival = Arrival(
                             route=tu.trip.route_id,
                             trip=tu.trip.trip_id,
-                            time=stu.arrival.time if "time" in stu.arrival else None,
-                            delay=stu.arrival.delay if "delay" in stu.arrival else None,
-                            departure_time=stu.departure.time
-                            if "time" in stu.departure
-                            else None,
-                            departure_delay=stu.departure.delay
-                            if "delay" in stu.departure
-                            else None,
-                            stop_sequence=stu.stop_sequence
-                            if "stop_sequence" in stu
-                            else None,
+                            time=helpers.as_datetime(
+                                getattr(stop_time_update.arrival, "time", None), False),
+                            delay=helpers.as_timedelta(
+                                getattr(stop_time_update.arrival, "delay", None), False),
+                            departure_time=helpers.as_datetime(
+                                getattr(stop_time_update.departure, "time", None), False),
+                            departure_delay=helpers.as_timedelta(
+                                getattr(stop_time_update.departure, "delay", None), False),
+                            stop_sequence=getattr(
+                                stop_time_update, "stop_sequence", None),
                             current_station=current_station,
                             destination=destination,
                             vehicle=vehicles.get(tu.trip.trip_id),
                         )
-                        sub.arrivals.append(arrival)
+
+                        subscriber.arrivals.append(arrival)
 
             if e.HasField("alert"):
                 al = e.alert
@@ -243,11 +244,11 @@ class FeedSubject:
                         hdr = al.header_text.translation
                         dsc = al.description_text.translation
                         alert = Alert(
-                            ends_at=ends_at.timestamp(),
+                            ends_at=ends_at,
                             header_text={h.language: h.text for h in hdr},
                             description_text={d.language: d.text for d in dsc},
                         )
-                        for sub in (
+                        for subscriber in (
                             sub
                             for sub in self.subscribers[ie.stop_id]
                             | self.subscribers[ie.route_id]
@@ -255,7 +256,7 @@ class FeedSubject:
                         ):
                             # validate that one of the active periods is current,
                             # then add it
-                            sub.alerts.append(alert)
+                            subscriber.alerts.append(alert)
 
     def _reset_subscribers(self) -> None:
         timestamp = time.time()

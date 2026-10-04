@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, override
 
@@ -38,11 +38,9 @@ class TripInfo:
 class TripInfoDataset(GtfsStaticDataset):
     """Dataset for Trip Infos."""
 
-    trip_infos: dict[str, TripInfo]
+    trip_infos: dict[str, TripInfo] = field(init=False, default_factory=dict)
 
-    def __init__(self):
-        self.trip_infos = {}
-        self.__cached_route_ids = None
+    __cached_route_ids: None | list[str] = field(init=False, default=None)
 
     @override
     async def async_add_gtfs_data(self, zip_filelike) -> None:
@@ -51,6 +49,10 @@ class TripInfoDataset(GtfsStaticDataset):
             self.trip_infos[trip_id] = TripInfo(line)
         # invalidate the cache
         self.__cached_route_ids = None
+
+    @override
+    def __getitem__(self, key) -> TripInfo:
+        return self.trip_infos[key]
 
     def get_close_match(
         self,
@@ -96,9 +98,6 @@ class TripInfoDataset(GtfsStaticDataset):
                 set(ti.route_id for ti in self.trip_infos.values() if ti.route_id)
             )
         return self.__cached_route_ids
-
-    def __getitem__(self, key) -> TripInfo:
-        return self.trip_infos[key]
 
     def get(self, key: Any, default: TripInfo | None = None) -> TripInfo | None:
         """Get Trip Info."""

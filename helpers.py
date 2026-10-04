@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from collections.abc import Generator
 from collections import namedtuple
-from datetime import datetime as dt, date, timedelta
+from datetime import datetime, date, timedelta
 from typing import IO, Any, AsyncGenerator, Callable, Literal, TypeVar, TypeVarTuple, overload, override, Generator
 from urllib.parse import urlparse
 from zipfile import ZipFile
@@ -26,24 +26,63 @@ class GtfsDialect(csv.excel):
 
     skipinitialspace = True
 
+
+@overload
+def as_datetime(time: float | datetime | None,
+                now_if_none: Literal[True] = True) -> datetime: ...
+
+
+@overload
+def as_datetime(time: float | datetime | None,
+                now_if_none: Literal[False] = False) -> datetime | None: ...
+
+
+def as_datetime(time: float | datetime | None, now_if_none: bool = True) -> datetime | None:
+    if isinstance(time, float) or isinstance(time, int):
+        return datetime.fromtimestamp(time)
+
+    if time is None:
+        return datetime.now() if now_if_none else None
+
+    return time
+
+
+@overload
+def as_timedelta(time: float | timedelta | None,
+                 zero_if_none: Literal[True] = True) -> timedelta: ...
+
+
+@overload
+def as_timedelta(time: float | timedelta | None,
+                 zero_if_none: Literal[False] = False) -> timedelta | None: ...
+
+
+def as_timedelta(time: float | timedelta | None, zero_if_none: bool = True) -> timedelta | None:
+    if isinstance(time, float) or isinstance(time, int):
+        return timedelta(seconds=time)
+
+    if time is None:
+        return timedelta() if zero_if_none else None
+
+    return time
+
+
 def is_none_or_ends_at(
-    alert: gtfs_realtime_pb2.Alert, at_time: float | dt | None = None
+    alert: gtfs_realtime_pb2.Alert, at_time: float | datetime | None = None
 ):
     """Returns the 'ends at' time, else returns None if not active."""
-    at_time_: dt = dt.fromtimestamp(at_time) \
-        if isinstance(at_time, float) \
-        else dt.now() if at_time is None \
-        else at_time  # type: ignore
+
+    at_time_ = as_datetime(at_time)
 
     for time_range in alert.active_period:
-        start: dt = (
-            dt.fromtimestamp(time_range.start)
+        start: datetime = (
+            datetime.fromtimestamp(time_range.start)
             if time_range.HasField("start")
-            else dt.min
+            else datetime.min
         )
-        end: dt = (
-            dt.fromtimestamp(time_range.end) if time_range.HasField(
-                "end") else dt.max
+        end: datetime = (
+            datetime.fromtimestamp(time_range.end) if time_range.HasField(
+                "end") else datetime.max
         )
         if start <= at_time_ <= end:
             return end
@@ -67,21 +106,26 @@ def get_as_number[T](
         tmp = d.get(key)
         if not bool(tmp):
             tmp = default
-        return to_type(tmp) 
+        return to_type(tmp)
     except ValueError:
         return default
+
 
 @overload
 def is_url(url: IO) -> Literal[False]: ...
 
+
 @overload
 def is_url(url: str) -> bool: ...
+
 
 @overload
 def is_url(url: URL) -> Literal[True]: ...
 
+
 @overload
 def is_url(url: os.PathLike) -> Literal[False]: ...
+
 
 def is_url(url: Any) -> bool:
     """Check if a str is a URL."""
@@ -119,8 +163,8 @@ async def gtfs_record_iter(
         # Make the request, check for good return code, and convert to IO object.
         # As GTFS Static Data updates rarely, (most providers recommend pulling this
         # once per day), we will use a cache to minimize unnecessary checks.
-        
-        async with session.get(zip_file, headers=headers) as resp: # type: ignore
+
+        async with session.get(zip_file, headers=headers) as resp:  # type: ignore
             if 200 <= resp.status < 400:
                 _LOGGER.debug(
                     "gtfs_record_iter: file response received. Writing output...")
@@ -157,7 +201,8 @@ async def gtfs_record_iter(
                           first_or_none, zip_file_path_or_bytes.__repr__())
             reader = csv.reader(buf, delimiter=",", dialect=GtfsDialect)
 
-            csv_headers: list[str] = [header.strip() for header in next(reader)]
+            csv_headers: list[str] = [header.strip()
+                                      for header in next(reader)]
 
             GTFSRowTuple = namedtuple("GTFSRow", csv_headers)
 

@@ -223,16 +223,14 @@ class StopTime:
 class StopTimesDataset(GtfsStaticDataset):
     """Dataset for Stop Times."""
 
-    stop_times: dict[str, dict[int, StopTime]]
+    stop_times: dict[str, dict[int, StopTime]] = field(
+        default_factory=dict, init=False)
+
     # only add stop_ids from here
-    stops_filter: set[str] = field(default_factory=set)
+    stops_filter: set[str] = field(default_factory=set, init=False)
 
-    stop_times_ordered: SortedList = field(default_factory=SortedList)
-
-    def __init__(self):
-        self.stop_times = {}
-        self.stops_filter = set()
-        self.stop_times_ordered = SortedList()
+    stop_times_ordered: SortedList = field(
+        default_factory=SortedList, init=False)
 
     @override
     async def async_add_gtfs_data(self, zip_filelike):
@@ -251,7 +249,7 @@ class StopTimesDataset(GtfsStaticDataset):
 
                 self.stop_times_ordered.add(stop_time)
 
-    def get(self, trip_id, stop_sequence, *, default: StopTime | None = None):
+    def get(self, trip_id: str, stop_sequence: int, *, default: StopTime | None = None):
         """Get Stop Time from Dataset."""
         by_trip_id = self.stop_times.get(trip_id)
         if by_trip_id is not None:

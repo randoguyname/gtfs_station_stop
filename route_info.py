@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, override
 
@@ -116,10 +116,7 @@ class RouteInfo:
 class RouteInfoDataset(GtfsStaticDataset):
     """Wrapper for map of Route Info."""
 
-    route_infos: dict[str, RouteInfo]
-
-    def __init__(self):
-        self.route_infos = {}
+    route_infos: dict[str, RouteInfo] = field(default_factory=dict, init=False)
 
     @override
     async def async_add_gtfs_data(self, zip_filelike):
@@ -130,12 +127,13 @@ class RouteInfoDataset(GtfsStaticDataset):
             route_id = line.route_id
             self.route_infos[route_id] = RouteInfo(line)
 
+    @override
+    def __getitem__(self, key):
+        return self.route_infos[key]
+
     def get_routes(self):
         """Return all routes."""
         return self.route_infos.keys()
-
-    def __getitem__(self, key):
-        return self.route_infos[key]
 
     def get(self, key: str, default: RouteInfo | None = None):
         """Get a RouteInfo or a default."""

@@ -21,7 +21,7 @@ class GtfsStaticDataset:
     """
 
     def _get_gtfs_record_iter(self, zip_filelike: os.PathLike | URL, target_txt: str):
-        return gtfs_record_iter(zip_filelike, target_txt) # type: ignore
+        return gtfs_record_iter(zip_filelike, target_txt)  # type: ignore
 
     @abstractmethod
     async def async_add_gtfs_data(self, zip_filelike: os.PathLike | URL) -> None:

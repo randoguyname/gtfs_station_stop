@@ -28,18 +28,18 @@ class ServiceDays(NamedTuple):
         return cls(*[False] * len(ServiceDays._fields))
 
 
+@dataclass
 class Service:
     """Class for keeping calendar service data."""
 
-    def __init__(
-        self, service_id: str, service_days: ServiceDays, start: date, end: date
-    ) -> None:
-        self.service_id = service_id
-        self.service_days = service_days
-        self.start = start
-        self.end = end
-        self.added_exceptions = set()
-        self.removed_exceptions = set()
+    service_id: str
+    service_days: ServiceDays = field(repr=False)
+    start: date = field(repr=False)
+    end: date = field(repr=False)
+    added_exceptions: set[date] = field(
+        default_factory=set, init=False, repr=False)
+    removed_exceptions: set[date] = field(
+        default_factory=set, init=False, repr=False)
 
     def is_active_on(self, the_date: date | None = None) -> bool:
         """Check if service is active on a given datetime, defaults to now."""
@@ -54,9 +54,6 @@ class Service:
             not normally_active and the_date in self.added_exceptions
         )
 
-    def __repr__(self) -> str:
-        return f"{__class__} id:{self.service_id}"
-
     @classmethod
     def no_regular_service(cls, service_id: str) -> Self:
         """Provides a service with no regular service days."""
@@ -67,10 +64,7 @@ class Service:
 class Calendar(GtfsStaticDataset):
     """Provides the Calendar data."""
 
-    services: dict[str, Service] = field(default_factory=dict)
-
-    def __init__(self) -> None:
-        self.services = {}
+    services: dict[str, Service] = field(default_factory=dict, init=False)
 
     @override
     async def async_add_gtfs_data(self, zip_filelike) -> None:
@@ -115,6 +109,10 @@ class Calendar(GtfsStaticDataset):
             else:
                 raise RuntimeError("Unsupported GTFS service exception type.")
 
+    @override
+    def __getitem__(self, key) -> Service:
+        return self.services[key]
+
     def get_active_services(self, the_date: date | None = None) -> list[Service]:
         """Filtered list of all active services."""
         if the_date is None:
@@ -126,6 +124,3 @@ class Calendar(GtfsStaticDataset):
         if the_date is None:
             the_date = date.today()
         return [s for s in self.services.values() if not s.is_active_on(the_date)]
-
-    def __getitem__(self, key) -> Service:
-        return self.services[key]
