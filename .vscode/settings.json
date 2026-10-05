@@ -1,5 +1,0 @@
-{
-    "python.analysis.autoImportCompletions": true,
-    "python.terminal.activateEnvInCurrentTerminal": true,
-    "editor.formatOnSave": true
-}
