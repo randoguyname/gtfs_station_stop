@@ -229,7 +229,7 @@ class StopTimesDataset(GtfsStaticDataset):
     # only add stop_ids from here
     stops_filter: set[str] = field(default_factory=set, init=False)
 
-    stop_times_ordered: SortedList = field(
+    stop_times_ordered: SortedList[StopTime] = field(
         default_factory=SortedList, init=False)
 
     @override
@@ -241,13 +241,15 @@ class StopTimesDataset(GtfsStaticDataset):
             return
 
         async for line in self._get_gtfs_record_iter(zip_filelike, "stop_times.txt"):
-            if getattr(line, "stop_id", None) in (self.stops_filter or set()):
-                stop_time = StopTime(line)
-                self.stop_times.setdefault(stop_time.trip_id, {})[
-                    stop_time.stop_sequence
-                ] = stop_time
+            if not getattr(line, "stop_id", None) in self.stops_filter:
+                continue
 
-                self.stop_times_ordered.add(stop_time)
+            stop_time = StopTime(line)
+            self.stop_times.setdefault(stop_time.trip_id, {})[
+                stop_time.stop_sequence
+            ] = stop_time
+
+            self.stop_times_ordered.add(stop_time)
 
     def get(self, trip_id: str, stop_sequence: int, *, default: StopTime | None = None):
         """Get Stop Time from Dataset."""
