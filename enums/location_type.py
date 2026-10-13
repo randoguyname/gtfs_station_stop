@@ -31,9 +31,13 @@ class LocationType(IntEnum):
 
     @classmethod
     def _missing_(cls, value: object) -> LocationType:
-        if isinstance(value, str):
-            value = int(value)
-            for member in cls:
-                if member.value == value:
-                    return member
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
         return cls.STOP

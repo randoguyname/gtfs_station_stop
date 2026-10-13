@@ -14,11 +14,15 @@ class DropOffType(Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> DropOffType:
-        if isinstance(value, str):
-            value = int(value)
-            for member in cls:
-                if member.value == value:
-                    return member
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
         return cls.REGULARLY_SCHEDULED
 
 
@@ -35,9 +39,13 @@ class ContinuousDropOffType(Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> ContinuousDropOffType:
-        if isinstance(value, str):
-            value = int(value)
-            for member in cls:
-                if member.value == value:
-                    return member
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
         return cls.NO_DROP_OFF_AVAILABLE

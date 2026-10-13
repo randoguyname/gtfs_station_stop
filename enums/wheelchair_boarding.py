@@ -16,9 +16,13 @@ class WheelchairBoarding(Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> WheelchairBoarding:
-        if isinstance(value, str):
-            value = int(value)
-            for member in cls:
-                if member.value == value:
-                    return member
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
         return cls.NO_INFORMATION

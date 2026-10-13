@@ -15,11 +15,15 @@ class PickupType(Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> PickupType:
-        if isinstance(value, str):
-            value = int(value)
-            for member in cls:
-                if member.value == value:
-                    return member
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
         return cls.REGULARLY_SCHEDULED
 
 
@@ -36,9 +40,13 @@ class ContinuousPickupType(Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> ContinuousPickupType:
-        if isinstance(value, str):
-            value = int(value)
-            for member in cls:
-                if member.value == value:
-                    return member
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
         return cls.NO_PICKUP_AVAILABLE

@@ -14,9 +14,16 @@ class StopTimeScheduleRelationship(Enum):
 
     @classmethod
     def _missing_(cls, value) -> StopTimeScheduleRelationship | None:
-        if value is None:
-            return cls.SCHEDULED
-        return super()._missing_(value)
+        try:
+            if isinstance(value, str):
+                value = int(value)
+                for member in cls:
+                    if member.value == value:
+                        return member
+        except ValueError:
+            pass
+
+        return cls.SCHEDULED
 
 
 class TripDescriptorScheduleRelationship(Enum):
