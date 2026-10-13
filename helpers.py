@@ -217,7 +217,7 @@ async def gtfs_record_iter[T: GtfsRowTuple](
             "GTFSRow", csv_headers)
 
         for row in reader:
-            yield tuple_t(*[item.strip() for item in row])
+            yield tuple_t([item.strip() for item in row])
 
 
 def date_range(start: date, end: date) -> Generator[date]:
