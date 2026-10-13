@@ -2,24 +2,29 @@
 
 import asyncio
 import concurrent.futures
-import contextlib
 import time
-from collections import defaultdict
 from collections.abc import Collection
 from typing import Any
-from weakref import WeakSet
-from datetime import timedelta
+from logging import getLogger
 
 import requests
 from aiohttp import ClientSession, ClientTimeout
 from google.transit import gtfs_realtime_pb2
+from google.transit.gtfs_realtime_pb2 import TripUpdate
 
-from . import helpers
-from .alert import Alert
-from .arrival import Arrival
-from .schedule import ScheduleRelationship
-from .updatable import Updatable
+from .. import helpers
+from ..alert import Alert
+from ..arrival import Arrival
+from .subscriber import (Subscriber, BaseArrivalSubscriber, StopTimeUpdateSubscriberUpdateContext,
+                         ArrivalSubscriberUpdate, AlertSubscriberUpdateContext, AlertSubscriberUpdate)
 from .vehicle import Vehicle, from_vehicle_position_message
+from ..trip_identifier import TripIdentifier
+from .subscriber_collection import SubscriberCollection
+from .subscriber_identifier import SubscriberIdentifier, StationStopIdentifier, RouteIdentifier
+from ..enums import (LocationType, FeedEntityType,
+                     StopTimeScheduleRelationship, TripDescriptorScheduleRelationship)
+
+_LOGGER = getLogger(__name__)
 
 
 class FeedSubject:
@@ -27,6 +32,13 @@ class FeedSubject:
     Subject in the observer pattern. Manages the polling of registered endpoints and
     updates subscribed entities.
     """
+
+    realtime_feed_uris: set[str]
+    _headers: dict[str, Any] | None
+    _max_api_calls_per_second: float | None
+    _http_timeout: float | None
+
+    subscribers: SubscriberCollection
 
     def __init__(
         self,
@@ -37,10 +49,10 @@ class FeedSubject:
         http_timeout: float = 30,
     ) -> None:
         self.realtime_feed_uris = set(realtime_feed_uris)
-        self._headers: dict[str, Any] | None = headers
-        self._max_api_calls_per_second: float | None = max_api_calls_per_second
-        self._http_timeout: float | None = http_timeout
-        self.subscribers = defaultdict(WeakSet)
+        self._headers = headers
+        self._max_api_calls_per_second = max_api_calls_per_second
+        self._http_timeout = http_timeout
+        self.subscribers = SubscriberCollection()
 
     @property
     def headers(self) -> dict[str, Any] | None:
@@ -104,7 +116,9 @@ class FeedSubject:
         )
         if req.status_code <= 200 and req.status_code < 300:
             return req.content
-        req.raise_for_status()
+
+        _LOGGER.warning("Request to %s failed: %d %s, with message \"%s\"", uri, req.status_code, req.reason,
+                        req.content.decode()[:47] + "..." if len(req.content) > 50 else req.content.decode())
 
     def _get_gtfs_feed(self) -> gtfs_realtime_pb2.FeedMessage:
         def load_feed_data(_subject, _uri):
@@ -132,8 +146,11 @@ class FeedSubject:
         ) as req:
             if req.status <= 200 and req.status < 300:
                 return await req.read()
-            else:
-                req.raise_for_status()
+
+            content = await req.read()
+
+            _LOGGER.warning("Request to %s failed: %d %s, with message \"%s\"", uri, req.status,
+                            req.reason, content.decode()[:47] + "..." if len(content) > 50 else content.decode())
 
     async def _async_get_gtfs_feed(
         self, session: ClientSession
@@ -164,27 +181,6 @@ class FeedSubject:
                 tg.create_task(async_load_feed_data(self, uri, feed, tg))
         return feed
 
-    @staticmethod
-    def _get_current_trip_position(
-        trip_update,
-        *,
-        current_time: float | None = None,
-        max_allowed_seconds: float = 180,
-    ) -> str | None:
-        current_pos = None
-        if current_time is None:
-            current_time = time.time()
-        for stu in trip_update.stop_time_update:
-            delta = abs(current_time - stu.arrival.time)
-            if delta < max_allowed_seconds and (
-                current_pos is None
-                or delta < abs(current_time - current_pos.arrival.time)
-            ):
-                current_pos = stu
-        if current_pos is not None:
-            return current_pos.stop_id
-        return None
-
     def _notify_updates(self, feed: gtfs_realtime_pb2.FeedMessage):
         vehicles: dict[str, Vehicle] = {
             vehicle.trip_id: vehicle
@@ -198,43 +194,45 @@ class FeedSubject:
         for e in feed.entity:
             if e.HasField("trip_update"):
                 tu = e.trip_update
-                current_station = self._get_current_trip_position(tu)
-                destination = None
-                with contextlib.suppress(IndexError, AttributeError):
-                    destination = tu.stop_time_update[-1].stop_id
 
-                def _stop_time_update_filter(_stu) -> bool:
-                    if _stu.stop_id not in self.subscribers:
+                def _stop_time_update_filter(_stu: TripUpdate.StopTimeUpdate) -> bool:
+                    id = StationStopIdentifier(
+                        stop_id=_stu.stop_id, location_type=LocationType.UNKNOWN)
+                    if not self.subscribers.listens_to(id):
                         return False
-                    relationship = ScheduleRelationship(
+                    relationship = StopTimeScheduleRelationship(
                         _stu.schedule_relationship)
-                    return relationship in {ScheduleRelationship.SCHEDULED}
+                    return relationship in {StopTimeScheduleRelationship.SCHEDULED}
+
+                schedule_relationship = TripDescriptorScheduleRelationship(
+                    tu.trip.schedule_relationship)
+
+                if schedule_relationship in {
+                        TripDescriptorScheduleRelationship.DELETED,
+                        TripDescriptorScheduleRelationship.CANCELED}:
+
+                    for subscriber in self.subscribers.values():
+                        if isinstance(subscriber, BaseArrivalSubscriber):
+                            subscriber.cancel_arrival(
+                                tu.trip.trip_id, tu.trip.route_id)
 
                 for stop_time_update in filter(_stop_time_update_filter, tu.stop_time_update):
-                    for subscriber in (
-                        subscriber
-                        for subscriber in self.subscribers[stop_time_update.stop_id]
-                        if hasattr(subscriber, "arrivals")
-                    ):
-                        arrival = Arrival(
-                            route=tu.trip.route_id,
-                            trip=tu.trip.trip_id,
-                            time=helpers.as_datetime(
-                                getattr(stop_time_update.arrival, "time", None), False),
-                            delay=helpers.as_timedelta(
-                                getattr(stop_time_update.arrival, "delay", None), False),
-                            departure_time=helpers.as_datetime(
-                                getattr(stop_time_update.departure, "time", None), False),
-                            departure_delay=helpers.as_timedelta(
-                                getattr(stop_time_update.departure, "delay", None), False),
-                            stop_sequence=getattr(
-                                stop_time_update, "stop_sequence", None),
-                            current_station=current_station,
-                            destination=destination,
-                            vehicle=vehicles.get(tu.trip.trip_id),
-                        )
+                    id = StationStopIdentifier(
+                        stop_id=stop_time_update.stop_id, location_type=LocationType.UNKNOWN)
 
-                        subscriber.arrivals.append(arrival)
+                    for subscriber in self.subscribers.get_notified_subscribers(id):
+                        arrival = Arrival.from_realtime_data(
+                            tu, stop_time_update, vehicles.get(tu.trip.trip_id))
+
+                        with subscriber.get_update_manager(StopTimeUpdateSubscriberUpdateContext(
+                            id,
+                            FeedEntityType.TRIP_UPDATES,
+                            schedule_relationship,
+                            StopTimeScheduleRelationship(
+                                stop_time_update.schedule_relationship),
+                            TripIdentifier.from_trip_update(tu),
+                        )) as man:
+                            man.add_update(ArrivalSubscriberUpdate(arrival))
 
             if e.HasField("alert"):
                 al = e.alert
@@ -248,21 +246,20 @@ class FeedSubject:
                             header_text={h.language: h.text for h in hdr},
                             description_text={d.language: d.text for d in dsc},
                         )
-                        for subscriber in (
-                            sub
-                            for sub in self.subscribers[ie.stop_id]
-                            | self.subscribers[ie.route_id]
-                            if hasattr(sub, "alerts")
-                        ):
-                            # validate that one of the active periods is current,
-                            # then add it
-                            subscriber.alerts.append(alert)
+
+                        route_id = RouteIdentifier(ie.route_id)
+                        stop_id = StationStopIdentifier(
+                            ie.stop_id, LocationType.UNKNOWN)
+
+                        for subscriber in self.subscribers.get_notified_subscribers(route_id, stop_id):
+                            # TODO: fix this so the context works properly with the route/stop_id
+                            with subscriber.get_update_manager(AlertSubscriberUpdateContext(route_id, FeedEntityType.ALERT)) as man:
+                                man.add_update(AlertSubscriberUpdate(alert))
 
     def _reset_subscribers(self) -> None:
         timestamp = time.time()
-        for subs in self.subscribers.values():
-            for sub in subs:
-                sub.begin_update(timestamp)
+        for subscriber in self.subscribers.values():
+            subscriber.begin_update(timestamp)
 
     def _reset_and_notify(self, feed: gtfs_realtime_pb2.FeedMessage) -> None:
         self._reset_subscribers()
@@ -288,10 +285,10 @@ class FeedSubject:
 
         await asyncio.to_thread(reset_and_notify)
 
-    def subscribe(self, updatable: Updatable) -> None:
+    def subscribe(self, identifier: SubscriberIdentifier, subscriber: Subscriber) -> None:
         """Add an informed entity as a subscriber."""
-        self.subscribers[updatable.id].add(updatable)
+        self.subscribers.subscribe(identifier, subscriber)
 
-    def unsubscribe(self, updatable: Updatable) -> None:
+    def unsubscribe(self, identifier: SubscriberIdentifier, subscriber: Subscriber) -> None:
         """Remove an informed entity as a subscriber."""
-        self.subscribers[updatable.id].remove(updatable)
+        self.subscribers.unsubscribe(identifier, subscriber)

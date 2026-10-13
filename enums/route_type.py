@@ -1,9 +1,4 @@
-import os
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, override
-
-from .static_dataset import GtfsStaticDataset
 
 
 class RouteType(Enum):
@@ -81,60 +76,3 @@ class RouteType(Enum):
             RouteType.SHUTTLE_BUS: "Shuttle Bus",
         }
         return PRETTY_NAMES.get(self) or self.name
-
-
-class RouteInfo:
-    """Route Info."""
-    color: str | None
-    text_color: str | None
-    url: str | None
-    desc: str | None
-    type: RouteType
-    long_name: str | None
-    short_name: str | None
-    agency_id: str | None
-    id: str
-
-    def __init__(self, route_data) -> None:
-        self.id = route_data.route_id
-        self.type = RouteType(int(route_data.route_type))
-        self.agency_id = getattr(route_data, "agency_id", None)
-        self.short_name = getattr(route_data, "route_short_name", None)
-        self.long_name = getattr(route_data, "route_long_name", None)
-        if self.short_name is None and self.long_name is None:
-            raise ValueError(
-                "Either 'route_short_name' or 'route_long_name' must be provided."
-            )
-
-        self.desc = getattr(route_data, "route_desc", None)
-        self.url = getattr(route_data, "route_url", None)
-        self.color = getattr(route_data, "route_color", None)
-        self.text_color = getattr(route_data, "route_text_color", None)
-
-
-@dataclass
-class RouteInfoDataset(GtfsStaticDataset):
-    """Wrapper for map of Route Info."""
-
-    route_infos: dict[str, RouteInfo] = field(default_factory=dict, init=False)
-
-    @override
-    async def async_add_gtfs_data(self, zip_filelike):
-        async for line in self._get_gtfs_record_iter(zip_filelike, "routes.txt"):
-            if line is None:
-                continue
-
-            route_id = line.route_id
-            self.route_infos[route_id] = RouteInfo(line)
-
-    @override
-    def __getitem__(self, key):
-        return self.route_infos[key]
-
-    def get_routes(self):
-        """Return all routes."""
-        return self.route_infos.keys()
-
-    def get(self, key: str, default: RouteInfo | None = None):
-        """Get a RouteInfo or a default."""
-        return self.route_infos.get(key, default)

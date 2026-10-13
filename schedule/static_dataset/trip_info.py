@@ -1,37 +1,13 @@
-"""Trip Info."""
+from .calendar import Calendar
+from .static_dataset import GtfsStaticDataset
+from ..trip_info import TripInfo
+from ..gtfs_row.trips import Trips as TripRow
 
-import os
+
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, override
-
-from .calendar import Calendar
-from .static_dataset import GtfsStaticDataset
-
-
-class TripInfo:
-    """Trip Info."""
-
-    route_id: str
-    trip_id: str
-    service_id: str
-    trip_headsign: str | None
-    trip_short_name: str | None
-    direction_id: str | None
-    shape_id: str | None
-
-    def __init__(self, trip_data) -> None:
-        self.route_id = trip_data.route_id
-        self.trip_id = trip_data.trip_id
-        self.service_id = trip_data.service_id
-        self.trip_headsign = getattr(trip_data, "trip_headsign", "")
-        self.trip_short_name = getattr(trip_data, "trip_short_name", "")
-        self.direction_id = getattr(trip_data, "direction_id", None)
-        self.shape_id = getattr(trip_data, "shape_id", None)
-
-    def __repr__(self):
-        return f"{self.trip_id}: {self.route_id} to {self.trip_headsign}"
 
 
 @dataclass
@@ -43,8 +19,8 @@ class TripInfoDataset(GtfsStaticDataset):
     __cached_route_ids: None | list[str] = field(init=False, default=None)
 
     @override
-    async def async_add_gtfs_data(self, zip_filelike) -> None:
-        async for line in self._get_gtfs_record_iter(zip_filelike, "trips.txt"):
+    async def async_add_gtfs_data(self, resource) -> None:
+        async for line in self._get_gtfs_record_iter(resource.path, "trips.txt", TripRow):
             trip_id = line.trip_id
             self.trip_infos[trip_id] = TripInfo(line)
         # invalidate the cache

@@ -5,10 +5,11 @@ import tempfile
 from asyncio import TaskGroup, Lock
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum
 from os import PathLike
 from pathlib import Path
 from re import Pattern, search
+from typing import Any
+from functools import cache
 
 from aiohttp import ClientSession
 from yarl import URL
@@ -17,39 +18,26 @@ import logging
 from zipwire import AsyncRemoteZip
 from zipwire.backends import AiohttpReader
 
-from .arrival import Arrival
-from .calendar import Calendar
-from .helpers import is_url, date_range
-from .route_info import RouteInfoDataset
-from .static_dataset import (
+from ..arrival import Arrival
+from .static_dataset.station_stop_info import StationStopInfoDataset
+from .static_dataset.stop_times import StopTimesDataset
+from .static_dataset.calendar import Calendar
+from ..helpers import is_url, date_range
+from .static_dataset.route_info import RouteInfoDataset
+from .static_dataset.static_dataset import (
     GtfsStaticDataset,
     async_factory,
 )
-from .station_stop_info import StationStopInfo, StationStopInfoDataset
-from .stop_times import StopTimesDataset, GtfsArrivalDepartureTime
-from .trip_info import TripInfoDataset
+from .station_stop_info import StationStopInfo
+from ..realtime.station_stop import StationStop
+from .gtfs_arrival_departure_time import GtfsArrivalDepartureTime
+from .static_dataset.trip_info import TripInfoDataset
+from .gtfs_schedule_resource import GtfsScheduleResource
+from ..trip_identifier import TripIdentifier
 
 DEFAULT_CHUNK_SIZE = 65536
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class ScheduleRelationship(Enum):
-    """
-    Schedule Relationship.
-    see https://gtfs.org/documentation/realtime/reference/#enum-schedulerelationship
-    """
-
-    SCHEDULED = 0
-    SKIPPED = 1
-    NO_DATA = 2
-    UNSCHEDULED = 3
-
-    @classmethod
-    def _missing_(cls, value) -> ScheduleRelationship | None:
-        if value is None:
-            return cls.SCHEDULED
-        return super()._missing_(value)
 
 
 @dataclass(kw_only=True)
@@ -65,7 +53,7 @@ class GtfsSchedule:
     stop_times_ds: StopTimesDataset = field(default_factory=StopTimesDataset)
     download_dir_path: PathLike = Path(
         f"{tempfile.gettempdir()}/gtfs_station_stop")
-    resources: set[Path] = field(default_factory=set)
+    resources: set[GtfsScheduleResource] = field(default_factory=set)
     zip_subfile_filter: Pattern[str] | str | None = field(default=None)
 
     download_locks: dict[URL | PathLike, Lock] = field(default_factory=dict)
@@ -123,6 +111,9 @@ class GtfsSchedule:
         be time consuming and is not needed for many datasets.
         """
         self.stop_times_ds.stops_filter = stops_filter or set()
+
+        self.stop_times_ds.clear()
+
         for resource in self.resources:
             _LOGGER.debug("Loading stop times %s", resource)
             await self.stop_times_ds.async_add_gtfs_data(resource)
@@ -199,6 +190,7 @@ class GtfsSchedule:
                             route=trip_info.route_id,
                             trip=trip_info.trip_id,
                             time=at,
+                            stop_sequence=stop_time.stop_sequence,
                         )
                     )
 
@@ -264,10 +256,16 @@ class GtfsSchedule:
 
                     _LOGGER.debug(
                         "_async_download_to_file_and_add_data: Downloading file `%s` from url `%s`", filename, url)
+
+                    path = nested_dest / filename
+
+                    resource = GtfsScheduleResource(path)
+
+                    # TODO: make this async
                     with open(nested_dest / filename, "wb") as outfile:
                         await r.read_into(filename, outfile)
 
-                    self.resources.add(nested_dest / filename)
+                    self.resources.add(resource)
 
                     _LOGGER.debug(
                         "_async_download_to_file_and_add_data: File successfully downloaded")
@@ -285,17 +283,103 @@ class GtfsSchedule:
     def __del__(self) -> None:
         _LOGGER.debug("Deleting temporary resource files...")
         for resource in self.resources:
-            if not os.path.exists(resource):
+            if not os.path.exists(resource.path):
                 _LOGGER.debug("Resource %s already deleted", resource)
                 continue
 
             try:
-                os.remove(resource)
+                os.remove(resource.path)
                 _LOGGER.debug("Successfully deleted resource: %s", resource)
             except Exception as e:
                 _LOGGER.error(
                     "Failed to delete resource %s due to exception %s", resource, e)
         _LOGGER.debug("Temporary GTFS files deleted")
+
+    def merge_with_realtime_data(self, arrivals: list[Arrival], station_stop: StationStop) -> list[Arrival]:
+        # First, apply cancelations
+        filtered_arrivals: list[Arrival] = []
+
+        for arrival in arrivals:
+            passed = True
+            for details in station_stop.canceled_arrivals:
+                if details.route_id is not None and details.route_id == arrival.route:
+                    passed = False
+                    break
+
+                if details.trip_id is not None and details.trip_id == arrival.trip:
+                    passed = False
+                    break
+
+            if passed:
+                filtered_arrivals.append(arrival)
+
+        # Then, handle updates
+
+        for updated_arrival in station_stop.updated_arrivals:
+            for arrival in filtered_arrivals:
+                # must correspond to a list element
+                if arrival.trip == updated_arrival.trip:
+                    arrival.update_from(updated_arrival)
+                    break
+
+        # Finally, add new arrivals
+
+        trip_identifiers = [self.get_trip_identifier(
+            arrival.trip) for arrival in filtered_arrivals]
+
+        for added_trip_id, added_arrival in station_stop.added_arrivals.items():
+            # First, check to make sure the trip is not incorrect data (i.e. a duplicate of an existing static trip)
+            if added_trip_id in trip_identifiers:
+                idx = trip_identifiers.index(added_trip_id)
+                filtered_arrivals[idx].update_from(added_arrival)
+            else:
+                filtered_arrivals.append(added_arrival)
+
+        return filtered_arrivals
+
+    @cache
+    async def get_trip_identifier(self, trip_id: str) -> TripIdentifier:
+        lowest_stop_seq: Any | None = None
+        second_lowest_stop_seq: Any | None = None
+        for resource in self.resources:
+            async for stop_time in self.stop_times_ds._gtfs_record_search_by_first_column(resource, "stop_times.txt", trip_id):
+                if (stop_seq := getattr(stop_time, "stop_sequence", None)) is None:
+                    continue
+
+                if lowest_stop_seq is None:
+                    lowest_stop_seq = stop_seq
+                    continue
+
+                if second_lowest_stop_seq is None:
+                    second_lowest_stop_seq = stop_seq
+                    continue
+
+                if lowest_stop_seq.stop_sequence > stop_seq.stop_sequence:
+                    second_lowest_stop_seq = lowest_stop_seq
+                    lowest_stop_seq = stop_seq
+                    continue
+
+                if second_lowest_stop_seq.stop_sequence > stop_seq.stop_sequence:
+                    second_lowest_stop_seq = stop_seq
+                    continue
+
+        assert lowest_stop_seq is not None
+        assert second_lowest_stop_seq is not None
+        start_time = getattr(lowest_stop_seq, "arrival_time", None)
+
+        assert start_time is not None
+        start_time = GtfsArrivalDepartureTime.strptime(start_time)
+
+        trip_info = self.trip_info_ds.get_close_match(trip_id)
+
+        return TripIdentifier(
+            trip_id=trip_id,
+            start_time=start_time,
+            route_id=trip_info.route_id if trip_info is not None else None,
+            direction_id=trip_info.direction_id if trip_info is not None else None,
+            stop_id_1=lowest_stop_seq.stop_id,
+            stop_id_2=second_lowest_stop_seq.stop_id,
+        )
 
 
 async def async_build_schedule(

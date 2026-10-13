@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Iterable, Iterator, Self, SupportsIndex, TypeAlias, overload, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, Self, SupportsIndex, overload
 from bisect import insort, bisect_left, bisect_right
 
 if TYPE_CHECKING:

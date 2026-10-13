@@ -7,16 +7,16 @@ from pprint import pprint
 
 import dotenv
 
-from .calendar import Calendar
-from .feed_subject import FeedSubject
-from .route_status import RouteStatus
-from .schedule import async_build_schedule
-from .station_stop import StationStop
-from .station_stop_info import (  # noqa: F401
+from .schedule.static_dataset.calendar import Calendar
+from .realtime.feed_subject import FeedSubject
+from .realtime.route_status import RouteStatus
+from .schedule.schedule import async_build_schedule
+from .realtime.station_stop import StationStop
+from .schedule.static_dataset.station_stop_info import (  # noqa: F401
     StationStopInfoDataset,
 )
-from .stop_times import StopTimesDataset
-from .trip_info import TripInfoDataset  # noqa: F401
+from .schedule.static_dataset.stop_times import StopTimesDataset
+from .schedule.static_dataset.trip_info import TripInfoDataset  # noqa: F401
 
 if __name__ == "__main__":
     dotenv.load_dotenv()
