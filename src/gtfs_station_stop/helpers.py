@@ -261,7 +261,7 @@ def read_gtfs_line(line: str | bytes) -> tuple[str, ...]:
     return tuple(next(reader))
 
 
-def gtfs_binary_search[T: tuple](file: IO[bytes], start_offset: int, end_offset: int, search_term: str, headers: type[T]) -> Generator[T]:
+def gtfs_binary_search[T: tuple[str, ...]](file: IO[bytes], start_offset: int, end_offset: int, search_term: str, headers: type[T]) -> Generator[T]:
     # start and end offsets must always be at a file or line boundary
     # never check a line that begins before start offset, or one that starts after or at end_offset
 
@@ -284,7 +284,7 @@ def gtfs_binary_search[T: tuple](file: IO[bytes], start_offset: int, end_offset:
         file.seek(start_offset)
         while file.tell() < end_offset:
             line_bytes = file.readline()
-            line = headers(*read_gtfs_line(line_bytes))
+            line = headers(read_gtfs_line(line_bytes))
 
             if line[0] == search_term:  # TODO: comparison
                 yield line
@@ -298,7 +298,7 @@ def gtfs_binary_search[T: tuple](file: IO[bytes], start_offset: int, end_offset:
 
     line_bytes = file.readline()  # get a full line
 
-    line = headers(*read_gtfs_line(line_bytes))
+    line = headers(read_gtfs_line(line_bytes))
 
     offset_after = file.tell()
 

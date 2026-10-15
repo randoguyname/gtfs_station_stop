@@ -121,9 +121,12 @@ class FeedSubject:
                         req.content.decode()[:47] + "..." if len(req.content) > 50 else req.content.decode())
 
     def _get_gtfs_feed(self) -> gtfs_realtime_pb2.FeedMessage:
-        def load_feed_data(_subject, _uri):
+        def load_feed_data(_subject: FeedSubject, _uri: str) -> gtfs_realtime_pb2.FeedMessage | None:
             uri_feed = gtfs_realtime_pb2.FeedMessage()
-            uri_feed.ParseFromString(_subject._request_gtfs_feed(_uri))
+            data = _subject._request_gtfs_feed(_uri)
+            if data is None:
+                return
+            uri_feed.ParseFromString(data)
             return uri_feed
 
         # This is horrifically slow sequentially
@@ -136,7 +139,11 @@ class FeedSubject:
                 for uri in self.realtime_feed_uris
             ]
             for fut in concurrent.futures.as_completed(futs):
-                feed.MergeFrom(fut.result())
+                data = fut.result()
+                if data is None:
+                    continue
+
+                feed.MergeFrom(data)
 
         return feed
 
@@ -162,15 +169,19 @@ class FeedSubject:
             merge_into_feed.MergeFrom(merge_from_feed)
 
         async def async_load_feed_data(
-            _subject,
-            _uri,
+            _subject: FeedSubject,
+            _uri: str,
             main_feed: gtfs_realtime_pb2.FeedMessage,
             task_group: asyncio.TaskGroup,
         ):
             uri_feed = gtfs_realtime_pb2.FeedMessage()
-            uri_feed.ParseFromString(
-                await _subject._async_request_gtfs_feed(session, _uri)
-            )
+            data = await _subject._async_request_gtfs_feed(session, _uri)
+
+            if data is None:
+                return
+
+            uri_feed.ParseFromString(data)
+
             task_group.create_task(async_merge_feed(main_feed, uri_feed))
 
         feed = gtfs_realtime_pb2.FeedMessage()
@@ -179,6 +190,7 @@ class FeedSubject:
                 if self.delay_between_api_calls:
                     await asyncio.sleep(self.delay_between_api_calls)
                 tg.create_task(async_load_feed_data(self, uri, feed, tg))
+
         return feed
 
     def _notify_updates(self, feed: gtfs_realtime_pb2.FeedMessage):

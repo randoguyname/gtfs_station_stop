@@ -57,7 +57,7 @@ class Trips(GtfsRowTuple):
 
     @property
     def trip_id(self) -> str:
-        return self[self._trip_id_idx]
+        return self[self._trip_id_idx].replace("_", "+")
 
     @property
     def route_id(self) -> str:

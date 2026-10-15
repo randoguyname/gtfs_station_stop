@@ -10,6 +10,7 @@ from pathlib import Path
 from re import Pattern, search
 from typing import Any
 from functools import cache
+import random
 
 from aiohttp import ClientSession
 from yarl import URL
@@ -30,10 +31,12 @@ from .static_dataset.static_dataset import (
 )
 from .station_stop_info import StationStopInfo
 from ..realtime.station_stop import StationStop
+from ..realtime.subscriber_identifier import RouteIdentifier, StationStopIdentifier
 from .gtfs_arrival_departure_time import GtfsArrivalDepartureTime
 from .static_dataset.trip_info import TripInfoDataset
 from .gtfs_schedule_resource import GtfsScheduleResource
 from ..trip_identifier import TripIdentifier
+from .gtfs_row.stop_times import StopTimes
 
 DEFAULT_CHUNK_SIZE = 65536
 
@@ -57,6 +60,14 @@ class GtfsSchedule:
     zip_subfile_filter: Pattern[str] | str | None = field(default=None)
 
     download_locks: dict[URL | PathLike, Lock] = field(default_factory=dict)
+    _hash: int = field(init=False, repr=False,
+                       default_factory=lambda: random.randint(0, 2_000_000))
+
+    _trip_id_cache: dict[str, TripIdentifier] = field(init=False, repr=False,
+                                                      default_factory=dict)
+
+    def __hash__(self) -> int:
+        return hash(self._hash)
 
     async def async_build_schedule(
         self,
@@ -118,8 +129,11 @@ class GtfsSchedule:
             _LOGGER.debug("Loading stop times %s", resource)
             await self.stop_times_ds.async_add_gtfs_data(resource)
 
-    def get_stop_info(self, stop_id: str) -> StationStopInfo | None:
+    def get_stop_info(self, stop_id: str | StationStopIdentifier) -> StationStopInfo | None:
         """Get stop info by ID."""
+        if isinstance(stop_id, StationStopIdentifier):
+            return self.get_stop_info(stop_id.stop_id)
+
         return self.station_stop_info_ds.station_stop_infos.get(stop_id)
 
     def get_trip_headsign(self, trip_id: str) -> str:
@@ -187,8 +201,8 @@ class GtfsSchedule:
                 if start <= at <= end:
                     arrivals.append(
                         Arrival(
-                            route=trip_info.route_id,
-                            trip=trip_info.trip_id,
+                            route_id=trip_info.route_id,
+                            trip_id=trip_info.trip_id,
                             time=at,
                             stop_sequence=stop_time.stop_sequence,
                         )
@@ -295,18 +309,18 @@ class GtfsSchedule:
                     "Failed to delete resource %s due to exception %s", resource, e)
         _LOGGER.debug("Temporary GTFS files deleted")
 
-    def merge_with_realtime_data(self, arrivals: list[Arrival], station_stop: StationStop) -> list[Arrival]:
+    async def merge_with_realtime_data(self, arrivals: list[Arrival], station_stop: StationStop) -> list[Arrival]:
         # First, apply cancelations
         filtered_arrivals: list[Arrival] = []
 
         for arrival in arrivals:
             passed = True
             for details in station_stop.canceled_arrivals:
-                if details.route_id is not None and details.route_id == arrival.route:
+                if details.route_id is not None and details.route_id == arrival.route_id:
                     passed = False
                     break
 
-                if details.trip_id is not None and details.trip_id == arrival.trip:
+                if details.trip_id is not None and details.trip_id == arrival.trip_id:
                     passed = False
                     break
 
@@ -318,17 +332,23 @@ class GtfsSchedule:
         for updated_arrival in station_stop.updated_arrivals:
             for arrival in filtered_arrivals:
                 # must correspond to a list element
-                if arrival.trip == updated_arrival.trip:
+                if arrival.trip_id == updated_arrival.trip_id:
                     arrival.update_from(updated_arrival)
                     break
 
         # Finally, add new arrivals
 
-        trip_identifiers = [self.get_trip_identifier(
-            arrival.trip) for arrival in filtered_arrivals]
+        trip_identifiers = [await self.get_trip_identifier(
+            arrival.trip_id) for arrival in filtered_arrivals]
+
+        trip_identifiers = [
+            trip_identifier for trip_identifier in trip_identifiers if trip_identifier is not None]
 
         for added_trip_id, added_arrival in station_stop.added_arrivals.items():
             # First, check to make sure the trip is not incorrect data (i.e. a duplicate of an existing static trip)
+
+            added_trip_id = self.get_trip_id_missing_data(added_trip_id)
+
             if added_trip_id in trip_identifiers:
                 idx = trip_identifiers.index(added_trip_id)
                 filtered_arrivals[idx].update_from(added_arrival)
@@ -337,48 +357,82 @@ class GtfsSchedule:
 
         return filtered_arrivals
 
-    @cache
-    async def get_trip_identifier(self, trip_id: str) -> TripIdentifier:
-        lowest_stop_seq: Any | None = None
-        second_lowest_stop_seq: Any | None = None
-        for resource in self.resources:
-            async for stop_time in self.stop_times_ds._gtfs_record_search_by_first_column(resource, "stop_times.txt", trip_id):
-                if (stop_seq := getattr(stop_time, "stop_sequence", None)) is None:
-                    continue
+    async def get_trip_identifier(self, trip_id: str) -> TripIdentifier | None:
+        if trip_id in self._trip_id_cache:
+            return self._trip_id_cache[trip_id]
 
+        lowest_stop_seq: StopTimes | None = None
+        second_lowest_stop_seq: StopTimes | None = None
+        for resource in self.resources:
+            async for stop_time in self.stop_times_ds._gtfs_record_search_by_first_column(resource, "stop_times.txt", trip_id, StopTimes):
                 if lowest_stop_seq is None:
-                    lowest_stop_seq = stop_seq
+                    lowest_stop_seq = stop_time
                     continue
 
                 if second_lowest_stop_seq is None:
-                    second_lowest_stop_seq = stop_seq
+                    second_lowest_stop_seq = stop_time
                     continue
 
-                if lowest_stop_seq.stop_sequence > stop_seq.stop_sequence:
+                if lowest_stop_seq.stop_sequence > stop_time.stop_sequence:
                     second_lowest_stop_seq = lowest_stop_seq
-                    lowest_stop_seq = stop_seq
+                    lowest_stop_seq = stop_time
                     continue
 
-                if second_lowest_stop_seq.stop_sequence > stop_seq.stop_sequence:
-                    second_lowest_stop_seq = stop_seq
+                if second_lowest_stop_seq.stop_sequence > stop_time.stop_sequence:
+                    second_lowest_stop_seq = stop_time
                     continue
 
-        assert lowest_stop_seq is not None
-        assert second_lowest_stop_seq is not None
-        start_time = getattr(lowest_stop_seq, "arrival_time", None)
+        if lowest_stop_seq is None or second_lowest_stop_seq is None:
+            _LOGGER.warning(
+                "get_trip_identifier: Failed to get trip identifier for trip_id: %s", trip_id)
+            return None
 
-        assert start_time is not None
-        start_time = GtfsArrivalDepartureTime.strptime(start_time)
+        start_time = lowest_stop_seq.arrival_time
+
+        if start_time is None:
+            _LOGGER.warning(
+                "get_trip_identifier: Failed to get trip identifier for trip_id: %s", trip_id)
+            return None
 
         trip_info = self.trip_info_ds.get_close_match(trip_id)
 
-        return TripIdentifier(
+        trip_identifier = TripIdentifier(
             trip_id=trip_id,
             start_time=start_time,
-            route_id=trip_info.route_id if trip_info is not None else None,
+            route_id=RouteIdentifier(
+                trip_info.route_id) if trip_info is not None else None,
             direction_id=trip_info.direction_id if trip_info is not None else None,
-            stop_id_1=lowest_stop_seq.stop_id,
-            stop_id_2=second_lowest_stop_seq.stop_id,
+            stop_id_1=self.get_station_stop_identifier(
+                lowest_stop_seq.stop_id) if lowest_stop_seq and lowest_stop_seq.stop_id is not None else None,
+            stop_id_2=self.get_station_stop_identifier(
+                second_lowest_stop_seq.stop_id) if second_lowest_stop_seq and second_lowest_stop_seq.stop_id is not None else None,
+        )
+
+        self._trip_id_cache[trip_id] = trip_identifier
+
+        return trip_identifier
+
+    def get_station_stop_identifier(self, stop_id: str) -> StationStopIdentifier:
+        stop_info = self.get_stop_info(stop_id)
+        if stop_info is None:
+            return StationStopIdentifier(stop_id)
+
+        return StationStopIdentifier(
+            stop_id,
+            stop_info.location_type,
+            stop_info.parent_station
+        )
+
+    def get_trip_id_missing_data(self, trip_id: TripIdentifier) -> TripIdentifier:
+        return TripIdentifier(
+            trip_id=trip_id.trip_id,
+            start_time=trip_id.start_time,
+            stop_id_1=self.get_station_stop_identifier(
+                trip_id.stop_id_1.stop_id) if trip_id.stop_id_1 is not None else None,
+            stop_id_2=self.get_station_stop_identifier(
+                trip_id.stop_id_2.stop_id) if trip_id.stop_id_2 is not None else None,
+            route_id=trip_id.route_id,
+            direction_id=trip_id.direction_id,
         )
 
 

@@ -1,4 +1,4 @@
-from typing import Iterable, override
+from typing import Iterable, override, Self
 
 from ..gtfs_arrival_departure_time import GtfsArrivalDepartureTime
 from ...enums import PickupType, ContinuousPickupType, DropOffType, ContinuousDropOffType, Timepoint
@@ -24,6 +24,12 @@ class StopTimes(GtfsRowTuple):
     _timepoint_idx: int | None = None
     _pickup_booking_rule_id_idx: int | None = None
     _drop_off_booking_rule_id_idx: int | None = None
+
+    # really irritating patch fix - i dont want to talk about it
+    def __new__(cls, iterable: Iterable[str] = ()) -> Self:
+        iterator = iter(iterable)
+
+        return super().__new__(cls, [next(iterator).replace("_", "+"), *iterator])
 
     @staticmethod
     @override

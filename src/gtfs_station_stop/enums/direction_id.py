@@ -1,8 +1,8 @@
 from typing import Self
-from enum import Enum
+from enum import IntEnum
 
 
-class DirectionID(Enum):
+class DirectionID(IntEnum):
     ONE_DIRECTION = 0
     OPPOSITE_DIRECTION = 1
 

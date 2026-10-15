@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Self
+from functools import total_ordering
 
 from .realtime.vehicle import Vehicle
 from .schedule.static_dataset.stop_times import StopTimesDataset
@@ -11,16 +12,18 @@ from .helpers import as_datetime, as_timedelta, realtime_get_current_trip_positi
 from google.transit.gtfs_realtime_pb2 import TripUpdate
 
 
-@dataclass(kw_only=True, order=True)
+@total_ordering
+@dataclass(kw_only=True)
 class Arrival:
     """Class for keeping arrival data."""
 
+    trip_id: str
+    route_id: str
+    realtime_trip_id: str | None = None
     time: datetime | None = None
     delay: timedelta | None = None
     departure_time: datetime | None = None
     departure_delay: timedelta | None = None
-    trip: str
-    route: str
     stop_sequence: int | None = None
     destination: str | None = None
     vehicle: Vehicle | None = None
@@ -43,8 +46,8 @@ class Arrival:
             destination = trip_update.stop_time_update[-1].stop_id
 
         return cls(
-            route=trip_update.trip.route_id,
-            trip=trip_update.trip.trip_id,
+            route_id=trip_update.trip.route_id,
+            trip_id=trip_update.trip.trip_id,
             time=as_datetime(
                 getattr(stop_time_update.arrival, "time", None), False),
             delay=as_timedelta(
@@ -74,10 +77,10 @@ class Arrival:
             return self
 
         assert stop_times_dataset is not None
-        assert self.trip is not None
+        assert self.trip_id is not None
         assert self.stop_sequence is not None
 
-        stop_time = stop_times_dataset.get(self.trip, self.stop_sequence)
+        stop_time = stop_times_dataset.get(self.trip_id, self.stop_sequence)
 
         assert stop_time is not None
 
@@ -132,8 +135,10 @@ class Arrival:
         elif other.departure_delay is not None:
             self.departure_delay = other.departure_delay
 
-        self.trip = other.trip
-        self.route = other.route
+        if other.trip_id != self.trip_id:
+            self.realtime_trip_id = other.trip_id
+
+        self.route_id = other.route_id
 
         if other.stop_sequence is not None:
             self.stop_sequence = other.stop_sequence
@@ -149,3 +154,28 @@ class Arrival:
 
         if other.time_until is not None:
             self.time_until = other.time_until
+
+    def __lt__(self, value: object) -> bool:
+        if not isinstance(value, Arrival):
+            raise TypeError(
+                f"Cannot compare {self.__class__} with {value.__class__}")
+
+        if self.time is not None and value.time is not None and self.time != value.time:
+            return self.time < value.time
+
+        if self.departure_time is not None and value.departure_time is not None and self.departure_time != value.departure_time:
+            return self.departure_time < value.departure_time
+
+        if self.trip_id != value.trip_id:
+            return self.trip_id < value.trip_id
+
+        return self.route_id < value.route_id
+
+    def __str__(self) -> str:
+        return f"Arrival(time={self.time.strftime("%H:%M:%S") if self.time else None}, \
+delay={str(self.delay)}, \
+departure_time={self.departure_time.strftime("%H:%M:%S") if self.departure_time else None}, \
+delay={str(self.departure_delay)}, \
+trip_id={self.trip_id}, \
+route_id={self.route_id}, \
+realtime_trip_id={self.realtime_trip_id})"

@@ -34,10 +34,10 @@ class GtfsStaticDataset:
             session=session,  # type: ignore
         )
 
-    async def _gtfs_record_search_by_first_column(self, resource: GtfsScheduleResource, target_txt: str, search_term: str) -> AsyncGenerator[Any]:
+    async def _gtfs_record_search_by_first_column[T: GtfsRowTuple](self, resource: GtfsScheduleResource, target_txt: str, search_term: str, tuple_type: type[T]) -> AsyncGenerator[T]:
         if not resource.sorted_asc_by_first_column:
             # perform a linear search if the dataset is not sorted
-            async for line in self._get_gtfs_record_iter(resource.path, target_txt, GtfsRowTuple):
+            async for line in self._get_gtfs_record_iter(resource.path, target_txt, tuple_type):
                 if line[0] == search_term:
                     yield line
 
@@ -49,10 +49,10 @@ class GtfsStaticDataset:
 
         with file:
             headers = read_gtfs_line(file.readline())
-            GTFSRow = namedtuple("GTFSRow", headers)
+            tuple_t = tuple_type.make_named_tuple("GTFSRow", headers)
 
             for line in gtfs_binary_search(file, file.tell(), zip_info.file_size -
-                                           1, search_term, GTFSRow):
+                                           1, search_term, tuple_t):
                 yield line
 
     @abstractmethod

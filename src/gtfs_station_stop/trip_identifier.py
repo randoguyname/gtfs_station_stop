@@ -6,15 +6,16 @@ from google.transit.gtfs_realtime_pb2 import TripUpdate
 
 from .schedule.gtfs_arrival_departure_time import GtfsArrivalDepartureTime
 from .enums import TripDescriptorScheduleRelationship, DirectionID
+from .realtime.subscriber_identifier import StationStopIdentifier, RouteIdentifier
 
 
 @dataclass(frozen=True, kw_only=True)
 class TripIdentifier:  # TODO: technically, stop id is not required in Schedule; fix this
     trip_id: str | None = None
     start_time: GtfsArrivalDepartureTime | None = None
-    stop_id_1: str | None = None
-    stop_id_2: str | None = None
-    route_id: str | None = None
+    stop_id_1: StationStopIdentifier | None = None
+    stop_id_2: StationStopIdentifier | None = None
+    route_id: RouteIdentifier | None = None
     direction_id: DirectionID | None = None
 
     @classmethod
@@ -44,8 +45,8 @@ class TripIdentifier:  # TODO: technically, stop id is not required in Schedule;
             # stop id is required
             return cls(
                 start_time=start_time,
-                stop_id_1=stop_times[0].stop_id,
-                stop_id_2=stop_times[1].stop_id,
+                stop_id_1=StationStopIdentifier(stop_times[0].stop_id),
+                stop_id_2=StationStopIdentifier(stop_times[1].stop_id),
             )
 
         if schedule_relationship == TripDescriptorScheduleRelationship.UNSCHEDULED:
@@ -77,13 +78,13 @@ class TripIdentifier:  # TODO: technically, stop id is not required in Schedule;
             start_time=start_time,
             trip_id=trip_update.trip.trip_id if trip_update.trip.HasField(
                 "trip_id") and schedule_relationship != TripDescriptorScheduleRelationship.ADDED else None,
-            route_id=trip_update.trip.route_id if trip_update.trip.HasField(
+            route_id=RouteIdentifier(trip_update.trip.route_id) if trip_update.trip.HasField(
                 "route_id") else None,
             direction_id=DirectionID(trip_update.trip.direction_id) if trip_update.trip.HasField(
                 "direction_id") else None,
-            stop_id_1=stop_times[0].stop_id if stop_times[0].HasField(
+            stop_id_1=StationStopIdentifier(stop_times[0].stop_id) if stop_times[0].HasField(
                 "stop_id") else None,
-            stop_id_2=stop_times[1].stop_id if len(
+            stop_id_2=StationStopIdentifier(stop_times[1].stop_id) if len(
                 stop_times) >= 2 and stop_times[1].HasField("stop_id") else None,
         )
 
@@ -102,21 +103,12 @@ class TripIdentifier:  # TODO: technically, stop id is not required in Schedule;
             return False
 
         # now, one of the trip ids is None
-
         if self.stop_id_1 is not None and value.stop_id_1 is not None and \
-                self.stop_id_1 != value.stop_id_1:
+                not self.stop_id_1.same_station(value.stop_id_1):
             return False
 
         if self.stop_id_2 is not None and value.stop_id_2 is not None and \
-                self.stop_id_2 != value.stop_id_2:
-            return False
-
-        if self.route_id is not None and value.route_id is not None and \
-                self.route_id != value.route_id:
-            return False
-
-        if self.direction_id is not None and value.direction_id is not None and \
-                self.direction_id != value.direction_id:
+                not self.stop_id_2.same_station(value.stop_id_2):
             return False
 
         if self.start_time is not None and value.start_time is not None and \

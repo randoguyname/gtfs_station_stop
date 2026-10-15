@@ -1,4 +1,4 @@
-from typing import Self
+
 from enum import Enum
 
 

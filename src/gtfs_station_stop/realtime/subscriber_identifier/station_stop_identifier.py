@@ -65,9 +65,7 @@ class StationStopIdentifier(SubscriberIdentifier):
         if not isinstance(value, StationStopIdentifier):
             return False
 
-        return self.stop_id == value.stop_id \
-            and self.location_type == value.location_type \
-            and self.parent_station_id == value.parent_station_id
+        return self.stop_id == value.stop_id
 
     @override
     def listens_to(self, other: SubscriberIdentifier) -> bool:
@@ -78,6 +76,24 @@ class StationStopIdentifier(SubscriberIdentifier):
             return True
 
         if self.parent_station_id is not None and self.parent_station_id == other.stop_id:
+            return True
+
+        return False
+
+    def same_station(self, other: StationStopIdentifier) -> bool:
+        if self == other:
+            return True
+
+        if self.parent_station_id is not None:
+            if self.parent_station_id == other.parent_station_id:
+                return True
+
+            if self.parent_station_id == other.stop_id:
+                return True
+
+            return False
+
+        if other.parent_station_id == self.stop_id:
             return True
 
         return False

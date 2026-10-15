@@ -37,6 +37,7 @@ class SubscriberUpdateContextManager:
     def __init__(self, subscriber: Subscriber, context: SubscriberUpdateContext) -> None:
         self.subscriber = subscriber
         self.context = context
+        self.updates = []
 
     def __enter__(self) -> Self:
         return self
@@ -120,8 +121,8 @@ class ArrivalSubscriber(BaseArrivalSubscriber, ABC):
     def cancel_arrival(self, trip_id: str | None = None, route_id: str | None = None) -> None:
         assert trip_id is not None or route_id is not None
 
-        self.arrivals = list(filter(lambda arrival: (arrival.trip == trip_id if trip_id is not None else True) and (
-            arrival.route == route_id if route_id is not None else True), self.arrivals))
+        self.arrivals = list(filter(lambda arrival: (arrival.trip_id == trip_id if trip_id is not None else True) and (
+            arrival.route_id == route_id if route_id is not None else True), self.arrivals))
 
     def update_arrival(self, arrival: Arrival) -> None:
         self.arrivals.append(arrival)

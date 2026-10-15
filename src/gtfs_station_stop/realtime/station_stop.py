@@ -70,7 +70,8 @@ class StationStop(AlertSubscriber, BaseArrivalSubscriber):
 
         if context.trip_schedule_relationship == TripDescriptorScheduleRelationship.CANCELED \
                 or context.stop_time_schedule_relationship == StopTimeScheduleRelationship.SKIPPED:
-            self.cancel_arrival(update.arrival.trip, update.arrival.route)
+            self.cancel_arrival(update.arrival.trip_id,
+                                update.arrival.route_id)
             return
 
         self.add_arrival(update.arrival, context.trip_identifier)

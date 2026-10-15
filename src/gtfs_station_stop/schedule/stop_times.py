@@ -7,7 +7,6 @@ from functools import total_ordering
 from .gtfs_arrival_departure_time import GtfsArrivalDepartureTime
 
 from ..enums import DropOffType, PickupType, Timepoint, ContinuousDropOffType, ContinuousPickupType
-from ..helpers import get_as_number
 from .gtfs_row.stop_times import StopTimes
 
 
