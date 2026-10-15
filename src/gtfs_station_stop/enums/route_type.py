@@ -1,4 +1,5 @@
 from enum import IntEnum
+from typing import Literal, overload
 
 
 class HVTCategory(IntEnum):
@@ -157,9 +158,9 @@ class RouteType(IntEnum):
 
         return HVTCategory((self // 100) * 100)
 
-    def to_basic(self) -> RouteType:
+    def to_basic(self) -> BasicRouteType:
         if not self.is_extended():
-            return self
+            return self  # type: ignore
 
         category = self.get_category()
 
@@ -278,3 +279,12 @@ PRETTY_NAMES = {
     RouteType.MISCELLANEOUS_SERVICE: "Miscellaneous Service",
     RouteType.HORSE_DRAWN_CARRIAGE: "Horse-drawn Carriage",
 }
+
+type BasicRouteType = Literal[RouteType.RAIL] \
+    | Literal[RouteType.BUS] \
+    | Literal[RouteType.TRAM] \
+    | Literal[RouteType.FERRY] \
+    | Literal[RouteType.AERIAL_LIFT] \
+    | Literal[RouteType.FUNICULAR] \
+    | Literal[RouteType.TROLLEYBUS] \
+    | Literal[RouteType.UNKNOWN]
