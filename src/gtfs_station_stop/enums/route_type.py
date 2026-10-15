@@ -1,5 +1,5 @@
 from enum import IntEnum
-from typing import Literal, overload
+from typing import Literal
 
 
 class HVTCategory(IntEnum):
